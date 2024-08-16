@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    https://www.apache.org/licenses/LICENSE-2.0
+	https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,8 +34,8 @@ const (
 )
 
 var (
-	re                 = regexp.MustCompile(`^/v2/`)
-	realm              = regexp.MustCompile(`realm="(.*?)"`)
+	re    = regexp.MustCompile(`^/v2/`)
+	realm = regexp.MustCompile(`realm="(.*?)"`)
 )
 
 type myContextKey string
@@ -53,6 +53,7 @@ func main() {
 		log.Fatal("PORT environment variable not specified")
 	}
 	browserRedirects := os.Getenv("DISABLE_BROWSER_REDIRECTS") == ""
+	bypassGARBlobs := os.Getenv("DISABLE_GAR_BLOB_BYPASS") == ""
 
 	registryHost := os.Getenv("REGISTRY_HOST")
 	if registryHost == "" {
@@ -93,7 +94,10 @@ func main() {
 	if tokenEndpoint != "" {
 		mux.Handle("/_token", tokenProxyHandler(tokenEndpoint, repoPrefix))
 	}
-	mux.Handle("/v2/", registryAPIProxy(reg, auth))
+	mux.Handle("/v2/", registryAPIProxy(reg, auth, bypassGARBlobs))
+	if !bypassGARBlobs {
+		mux.Handle("/artifacts-downloads/", artifactRegistryBlobProxy(reg))
+	}
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	handler := captureHostHeader(mux)
@@ -174,12 +178,13 @@ func browserRedirectHandler(cfg registryConfig) http.HandlerFunc {
 }
 
 // registryAPIProxy returns a reverse proxy to the specified registry.
-func registryAPIProxy(cfg registryConfig, auth authenticator) http.HandlerFunc {
+func registryAPIProxy(cfg registryConfig, auth authenticator, bypassGARBlobs bool) http.HandlerFunc {
 	return (&httputil.ReverseProxy{
 		FlushInterval: -1,
 		Director:      rewriteRegistryV2URL(cfg),
 		Transport: &registryRoundtripper{
-			auth: auth,
+			auth:           auth,
+			bypassGARBlobs: bypassGARBlobs,
 		},
 	}).ServeHTTP
 }
@@ -199,8 +204,26 @@ func rewriteRegistryV2URL(c registryConfig) func(*http.Request) {
 	}
 }
 
+func artifactRegistryBlobProxy(cfg registryConfig) http.HandlerFunc {
+	return (&httputil.ReverseProxy{
+		FlushInterval: -1,
+		Director:      rewriteArtifactRegistryBlobURL(cfg),
+	}).ServeHTTP
+}
+
+func rewriteArtifactRegistryBlobURL(c registryConfig) func(*http.Request) {
+	return func(req *http.Request) {
+		u := req.URL.String()
+		req.Host = c.host
+		req.URL.Scheme = "https"
+		req.URL.Host = c.host
+		log.Printf("rewrote blob url: %s into %s", u, req.URL)
+	}
+}
+
 type registryRoundtripper struct {
-	auth authenticator
+	auth           authenticator
+	bypassGARBlobs bool
 }
 
 func (rrt *registryRoundtripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -225,9 +248,11 @@ func (rrt *registryRoundtripper) RoundTrip(req *http.Request) (*http.Response, e
 
 	// Google Artifact Registry sends a "location: /artifacts-downloads/..." URL
 	// to download blobs. We don't want these routed to the proxy itself.
-	if locHdr := resp.Header.Get("location"); req.Method == http.MethodGet &&
-		resp.StatusCode == http.StatusFound && strings.HasPrefix(locHdr, "/") {
-		resp.Header.Set("location", req.URL.Scheme+"://"+req.URL.Host+locHdr)
+	if rrt.bypassGARBlobs {
+		if locHdr := resp.Header.Get("location"); req.Method == http.MethodGet &&
+			resp.StatusCode == http.StatusFound && strings.HasPrefix(locHdr, "/") {
+			resp.Header.Set("location", req.URL.Scheme+"://"+req.URL.Host+locHdr)
+		}
 	}
 
 	updateTokenEndpoint(resp, origHost)
@@ -235,7 +260,9 @@ func (rrt *registryRoundtripper) RoundTrip(req *http.Request) (*http.Response, e
 }
 
 // updateTokenEndpoint modifies the response header like:
-//    Www-Authenticate: Bearer realm="https://auth.docker.io/token",service="registry.docker.io"
+//
+//	Www-Authenticate: Bearer realm="https://auth.docker.io/token",service="registry.docker.io"
+//
 // to point to the https://host/token endpoint to force using local token
 // endpoint proxy.
 func updateTokenEndpoint(resp *http.Response, host string) {
