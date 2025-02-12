@@ -158,12 +158,13 @@ environment variables:
 
 While deploying, you can set additional environment variables for customization:
 
-| Key | Value |
-|-----|-------|
-| `REGISTRY_HOST` | specify  hostname for target registry, e.g. `gcr.io`. |
-| `DISABLE_BROWSER_REDIRECTS` |  if you set this variable to any value,   visiting `example.com/image` on this browser will not redirect to  `[REGISTRY_HOST]/[REPO_PREFIX]/image` to allow your users to browse the image on GCR. If you're exposing private registries, you might want to set this variable. |
-| `AUTH_HEADER` | The `Authentication: [...]` header’s value to authenticate to the target registry |
-| `GOOGLE_APPLICATION_CREDENTIALS` | (For `gcr.io`) Path to the IAM service account JSON key  file to expose the private GCR registries publicly. |
+| Key                              | Value                                                                                                                                                                                                                                                                         |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `REGISTRY_HOST`                  | specify  hostname for target registry, e.g. `gcr.io`.                                                                                                                                                                                                                         |
+| `DISABLE_BROWSER_REDIRECTS`      | if you set this variable to any value,   visiting `example.com/image` on this browser will not redirect to  `[REGISTRY_HOST]/[REPO_PREFIX]/image` to allow your users to browse the image on GCR. If you're exposing private registries, you might want to set this variable. |
+| `DISABLE_GAR_BLOB_BYPASS`        | if you set this variable to any value,   layer blobs will be served via this proxy rather than directly from GAR. Note that this will incur more costs on Cloud Run such as networking egress and longer execution times leading to higher "billable time".                   |
+| `AUTH_HEADER`                    | The `Authentication: [...]` header’s value to authenticate to the target registry                                                                                                                                                                                             |
+| `GOOGLE_APPLICATION_CREDENTIALS` | (For `gcr.io`) Path to the IAM service account JSON key  file to expose the private GCR registries publicly.                                                                                                                                                                  |
 
 -----
 
