@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -27,6 +28,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -85,6 +88,8 @@ func main() {
 		}
 		log.Printf("using specified service account json key to authenticate proxied requests")
 		auth = authHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("_json_key:%s", string(b)))))
+	} else if os.Getenv("USE_GCE_METADATA_SERVER") != "" {
+		auth = &gceMetadataAuthenticator{}
 	}
 
 	mux := http.NewServeMux()
@@ -281,3 +286,57 @@ type authenticator interface {
 type authHeader string
 
 func (b authHeader) AuthHeader() string { return string(b) }
+
+type gceMetadataAuthenticator struct {
+	accessToken string
+	tokenType   string
+	expires     time.Time
+	mu          sync.Mutex
+}
+
+func (g *gceMetadataAuthenticator) AuthHeader() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.accessToken != "" && time.Now().Before(g.expires) {
+		return fmt.Sprintf("%s %s", g.tokenType, g.accessToken)
+	}
+
+	log.Printf("fetching new token from GCE metadata server")
+
+	// Fetch a new token from the GCE metadata server
+	const metadataURL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+	req, err := http.NewRequest("GET", metadataURL, nil)
+	if err != nil {
+		log.Printf("failed to create request for metadata server: %+v", err)
+		return ""
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("failed to fetch token from metadata server: %+v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("unexpected status code from metadata server: %d", resp.StatusCode)
+		return ""
+	}
+
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResponse); err != nil {
+		log.Printf("failed to decode token response: %+v", err)
+		return ""
+	}
+
+	// Refresh a minute before expiration
+	g.expires = time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second).Add(-1 * time.Minute)
+	g.accessToken = tokenResponse.AccessToken
+	g.tokenType = tokenResponse.TokenType
+	return fmt.Sprintf("%s %s", g.tokenType, g.accessToken)
+}

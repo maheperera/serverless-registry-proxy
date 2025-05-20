@@ -141,6 +141,10 @@ environment variables:
    to access the GCR registry GCS Bucket. (Or simply, you can give it the
    project-wide `Storage Object Viewer` role.)
 
+1. If running on Cloud Run, you can use the GCE metadata server to authenticate
+   to the private registry (set USE_GCE_METADATA_SERVER env var to some value). This is the recommended way. You can skip the following
+   steps.
+ 
 1. Copy your service account JSON key into the root of the repository as
    `key.json`.
 
@@ -165,6 +169,7 @@ While deploying, you can set additional environment variables for customization:
 | `DISABLE_GAR_BLOB_BYPASS`        | if you set this variable to any value,   layer blobs will be served via this proxy rather than directly from GAR. Note that this will incur more costs on Cloud Run such as networking egress and longer execution times leading to higher "billable time".                   |
 | `AUTH_HEADER`                    | The `Authentication: [...]` header’s value to authenticate to the target registry                                                                                                                                                                                             |
 | `GOOGLE_APPLICATION_CREDENTIALS` | (For `gcr.io`) Path to the IAM service account JSON key  file to expose the private GCR registries publicly.                                                                                                                                                                  |
+| `USE_GCE_METADATA_SERVER`        | if you set this variable to any value, authentication to private GCR/GAR registries will use the GCE metadata server to authenticate. Use this when running on CloudRun or a VM.                                                                                              |
 
 -----
 
