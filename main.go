@@ -213,7 +213,39 @@ func artifactRegistryBlobProxy(cfg registryConfig) http.HandlerFunc {
 	return (&httputil.ReverseProxy{
 		FlushInterval: -1,
 		Director:      rewriteArtifactRegistryBlobURL(cfg),
+		Transport:     &followRedirectTransport{wrapped: http.DefaultTransport},
 	}).ServeHTTP
+}
+
+// followRedirectTransport follows redirects (e.g. GAR → GCS signed URL) so
+// that the short-lived signed URL is never exposed to the Docker client.
+// Without this, Docker receives the signed URL directly and may try to resume
+// a partial download after the URL has expired, causing connection resets.
+type followRedirectTransport struct {
+	wrapped http.RoundTripper
+}
+
+func (t *followRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	client := &http.Client{
+		Transport: t.wrapped,
+		CheckRedirect: func(newReq *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			// Preserve Range header across redirects so partial/resumed
+			// downloads work correctly against the final GCS endpoint.
+			if rangeHdr := via[0].Header.Get("Range"); rangeHdr != "" {
+				newReq.Header.Set("Range", rangeHdr)
+			}
+			return nil
+		},
+	}
+	newReq, err := http.NewRequestWithContext(req.Context(), req.Method, req.URL.String(), req.Body)
+	if err != nil {
+		return nil, err
+	}
+	newReq.Header = req.Header.Clone()
+	return client.Do(newReq)
 }
 
 func rewriteArtifactRegistryBlobURL(c registryConfig) func(*http.Request) {
